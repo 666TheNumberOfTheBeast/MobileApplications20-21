@@ -15,12 +15,20 @@ import android.view.MotionEvent
 import android.view.View
 
 import com.android.volley.Request
+import com.android.volley.toolbox.JsonObjectRequest
 import com.android.volley.toolbox.StringRequest
 import com.android.volley.toolbox.Volley
 
+import com.example.tictactoe.configuration.Configuration.Companion.ID
+import com.example.tictactoe.configuration.Configuration.Companion.MULTIPLAYER
+import com.example.tictactoe.configuration.Configuration.Companion.NEW_MOVE
+import com.example.tictactoe.configuration.Configuration.Companion.POLLING
+import com.example.tictactoe.configuration.Configuration.Companion.URL
+import com.example.tictactoe.configuration.Configuration.Companion.POLLING_PERIOD
+
 import kotlin.math.min
 
-class mainView(context: Context?) : View(context), View.OnTouchListener {
+class GameView(context: Context?) : View(context), View.OnTouchListener {
 
     // Paint for the grid
     private val gridPaint = Paint().apply{
@@ -54,18 +62,20 @@ class mainView(context: Context?) : View(context), View.OnTouchListener {
     private var cells = Array(hlines+1) { IntArray(vlines+1) {UNDEFINED} }
 
     // Variables for the 2 players version
-    private val pollingPeriod = 1000L
-    private val who = UNDEFINED
-    private val URL = "192...:5000/?"
     private val queue = Volley.newRequestQueue(context)
 
     init {
         setOnTouchListener(this)
-        poll()
+
+        // Check if multiplayer mode
+        if (MULTIPLAYER)
+            poll()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+
+        Toast.makeText(context, "id: " + ID, Toast.LENGTH_SHORT).show()
 
         // Get the size of each cell of the grid
         dx = width/(vlines + 1f)
@@ -132,9 +142,12 @@ class mainView(context: Context?) : View(context), View.OnTouchListener {
                     return false
                 }
 
+                if (MULTIPLAYER)
+                    postMove(row, col)
+
                 checkWinner()
 
-                if (winner == UNDEFINED)
+                if (!MULTIPLAYER && winner == UNDEFINED)
                     // Reply to player move
                     moveIA()
                 else if (winner == PLAYER1)
@@ -147,7 +160,7 @@ class mainView(context: Context?) : View(context), View.OnTouchListener {
 
     // Set O mark in the grid cell (row, col)
     private fun setO(row: Int, col:Int): Boolean {
-        if (cells[row][col] != UNDEFINED)   return false
+        if (row < 0 || col < 0 || row > hlines || col > vlines || cells[row][col] != UNDEFINED)   return false
 
         //Toast.makeText(context, "O drawn at cell (" + row + "," + col + ")", Toast.LENGTH_SHORT).show()
         cells[row][col] = PLAYER1
@@ -158,7 +171,7 @@ class mainView(context: Context?) : View(context), View.OnTouchListener {
 
     // Set X mark in the grid cell (row, col)
     private fun setX(row: Int, col:Int): Boolean {
-        if (cells[row][col] != UNDEFINED)   return false
+        if (row < 0 || col < 0 || row > hlines || col > vlines || cells[row][col] != UNDEFINED)   return false
 
         //Toast.makeText(context, "X drawn at cell (" + row + "," + col + ")", Toast.LENGTH_SHORT).show()
         cells[row][col] = PLAYER2
@@ -271,12 +284,30 @@ class mainView(context: Context?) : View(context), View.OnTouchListener {
 
     // 2 players version functions
 
+    // Get adversary move from the server
     private fun getMove() {
-        // Request a string response from the provided URL
-        val stringRequest = StringRequest(
+        // Request a JSON response from the provided URL
+        val stringRequest = JsonObjectRequest(
             Request.Method.GET,
-            URL + "req=0&who=0",
-            { response -> Log.d("getMove", response.toString()) },
+            URL + "req=" + POLLING + "&who=" + ID,
+            null,
+            { response ->
+                Log.d("getMove", response.toString())
+
+                // Get last adversary move
+                val move = response.getInt("move")
+
+                // Map the unroll in the matrix
+                val row = move / (hlines+1)
+                val col = move % (hlines+1)
+
+                // Set adversary move
+                setX(row, col)
+
+                checkWinner()
+                if (winner == PLAYER2)
+                    Toast.makeText(context, "Lose", Toast.LENGTH_SHORT).show()
+            },
             { error -> Log.d("getMove", error.toString()) }
         )
 
@@ -284,11 +315,16 @@ class mainView(context: Context?) : View(context), View.OnTouchListener {
         queue.add(stringRequest)
     }
 
-    private fun postMove() {
-        // Request a string response from the provided URL
-        val stringRequest = StringRequest(
+    // Post move to the server
+    private fun postMove(row: Int, col: Int) {
+        // Unroll the matrix in an array index
+        val move = (hlines + 1) * row + col
+
+        // Request a JSON response from the provided URL
+        val stringRequest = JsonObjectRequest(
             Request.Method.POST,
-            URL + "req=2&who=0&move=0",
+            URL + "req=" + NEW_MOVE + "&who=" + ID + "&move=" + move,
+            null,
             { response -> Log.d("postMove", response.toString()) },
             { error -> Log.d("postMove", error.toString()) }
         )
@@ -297,9 +333,10 @@ class mainView(context: Context?) : View(context), View.OnTouchListener {
         queue.add(stringRequest)
     }
 
+    // Continuos polling
     private fun poll() {
         getMove()
-        Handler(Looper.myLooper()!!).postDelayed({ getMove() }, pollingPeriod)
+        Handler(Looper.myLooper()!!).postDelayed({ poll() }, POLLING_PERIOD)
     }
 
 }
